@@ -279,3 +279,78 @@ Each variable is prefixed by the uppercase alias, taken from the --link command,
 Within a user-defined bridge network, linking is not supported. It works only on the bridge network created by default. If you need your containers to communicate on your created bridge network, you can expose and publish container ports on containers in this network.
 
 Docker's linking feature is a great way for source container to provide information about itself to a recipient container. In fact, this is internal to Docker and doesn't require exposing any network ports. That's a big benefit of linking: we don't need to expose the source container to the network.
+
+## Docker volumes
+
+### Creating a volume
+
+1. Creating a nameless volume by simply mapping volume to host directory (by using the -v argument for the docker run command)
+
+2. Creating a Docker container image only for data (and then using the --volumes-from for docker run command)
+
+3. Creating a Docker named volume explicitly (using the docker volume create command)
+
+```sh
+docker run -it -v /Users/jarek/testDir/:/data ubuntu
+# the option 1,nameless volumn;
+```
+
+```sh
+docker run -it -v /data2 ubuntu
+#This time, Docker will create volume and map it to a internal path of the Docker setup on the host machine (it will be /var/lib/docker/volumes on the Macintosh).
+
+docker volume inspect <volumeName>
+
+docker run -it -v ~/.bash_history:/root/.bash_history ubuntu
+#Executing the preceding command will make you having the same bash history between your local machine and a started Ubuntu container. And best of all, if you exit the container, the bash history on your own local machine will contain the bash commands you have been executing inside the container.
+```
+
+You can use the -v multiple times to mount multiple data volumes.
+
+
+
+This way if one of your containers has volumes mounted already, you can instruct Docker to use the same volumes when starting another container. Consider the following example:
+```sh
+docker run -it --name myUbuntu -v /data ubuntu
+
+docker run -it --name myBusyBox --volumes-from myUbuntu busybox
+```
+
+your Ubuntu and busybox containers will share the same volume and thus, the same data. 
+
+The common practice when working with Docker is to create data-only containers. The only purpose of data-only containers is to carry on the volume. For any other containers that you then want to connect to this data volume container, use the Docker's ---volumes-from option to grab the volume from this container and apply them to the current container. Let's consider the following example:
+
+```sh
+$ docker create -v ~/docker-nginx/html:/usr/share/nginx/html --name
+    myWebSiteData nginx
+
+```
+
+By executing the preceding command, we are creating a container with the name myWebSiteData. Its only purpose will be to have a /usr/share/nginx/html volume attached and mapped to ~/docker-nginx/html in your home directory. You may ask what image should you pick as a base for the data-only container. Well, it doesn't matter that much - we are not going to run this container anyway, so it will not be wasting resources such as CPU or RAM. You may use the same image for the data container as for the container with the application you are going to run. You don't leave data containers running, so it won't consume resources. 
+
+With our data-only container ready, we can use it to provide a volume for another container (with our application, for example), using the --volumes-from option for the docker run command, just like we did previously, when dealing with nameless volumes.
+
+Let's say we want to run nginx with the volume referenced in our data-only myWebsiteData container:
+
+```sh
+$ docker run --name docker-nginx -p 80:80 -d --volumes-from
+    myWebsiteData nginx
+```
+
+Of course, the data-only container can be shared among other containers - in our case, you can run as many nginx containers as you like - as long as you enter the same --volumes-from option, they will share the same data.
+
+### docker volume create command
+
+```sh
+docker volume create --name data
+
+docker run -it -v data:/data ubuntu
+docker run -it -v data:/sharedWeb nginx
+#Volumes can be shared between containers - just run them with mapping the same volume.
+docker rm -v <containerName>
+docker volume rm $(docker volume ls -qf dangling=true)
+```
+
+Volumes allow sharing data between the host filesystem and the Docker container, or between other Docker containers, and they persist even if the container itself is deleted. We can use the volume drivers to further extend the file exchange possibilities.
+
+# Chapter 5. Finding Images
