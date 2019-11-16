@@ -153,6 +153,129 @@ docker run -d -p 5000:5000 --name
 
 We already know that the Dockerfile is the source code of the Image. It contains ordered instructions on how to build an image. An image is a specific state of a filesystem: a read-only, frozen immutable snapshot of a live container. It's composed of layers representing changes in the filesystem at various points in time; layers are a bit like the commit history of a Git repository. Containers, on the other hand are runtime instances of an image. They can have state (for example, running or stopped). You can make changes to the filesystem on a container and commit them to make them persisted, but only changes in the filesystem can be committed - memory changes will be lost. Commit always creates a new image. We also mentioned the concept of a registry, which holds a collection of named repositories, which themselves are a collection of images tracked by their IDs. A registry is like a Git repository: you can push and pull containers. 
 
+# Chapter 4. Networking and Persistent Storage
+
+## Docker networking
+Docker uses the concept of the Container Network Model (CNM). 
+
+There are three entities present in the CNM:
+
+* sandbox: This is an isolated environment holding the networking configuration for a container.
+* endpoint: This is a network interface that can be used for communication over a specific network. Endpoints join to exactly one network. Multiple endpoints can exist within a single network sandbox.
+* network: It's a group of endpoints that are able to communicate with each other. You could create, for example, two separate networks, and they will be completely isolated. Network can be identified by their names (such as backend and frontend) or IDs (generated automatically by Docker during the network creation).
+
+![](imgs/image_04_001.jpg)
+
+By default, two network drivers are provided by Docker: the bridge and the overlay driver. 
+
+All containers on the same network can communicate with each other *freely*. An endpoint provides network connectivity for a sandbox - if you need to join a container to multiple networks, there should be multiple endpoints per container. 
+
+### Default networks
+
+We have three networks installed by default: host, none, and bridge.
+
+### Host network
+
+If you start your container with the --net=host option, then the container will use the host network. It's a network created by default and it is using the host driver. It's as fast as the normal networking: there is no bridge, no translation, nothing. That's why it can be useful when you need to get the best network performance. In this mode, container shares the networking namespace of the host (your local machine, for example), directly exposing it to the outside world. In the case of --net=host, the container can be accessed through the host's IP address. **This also means that you need not use port mapping to reach services inside the container**. However, you need to be aware that this can be dangerous. If you have an application running as root and it has vulnerabilities, there will be a risk of security breach - someone can get the remote control of the host network via the Docker container.
+
+## Bridged network
+
+It's also the default network in Docker. When the Docker service daemon starts, it configures a virtual bridge named docker0. Unless you specify a network with the docker run --net=<NETWORK> option, the Docker daemon will connect the container to the bridge network by default. Docker will find a free IP address from the range available on the bridge and will configure the container's eth0 interface with that IP address. From now on, if the new container wants to, for example, connect to the Internet, it will use the bridge - the host's own IP address will be used as the gateway. This bridge will automatically forward packets between any other network interfaces that are attached to it and also allow containers to communicate with the host machine as well as with the containers on the same host.
+
+**By default, Docker containers can make connections to the outside world, they connect via the docker0 interface, but the outside world cannot connect to containers.**
+
+The docker network inspect command that we saw earlier shows all the connected containers and their network resources on a given network. 
+
+## Creating a network
+
+```
+$ docker network create backend
+```
+
+## Running a container in a network
+
+```
+docker run -it --net=bridge ubuntu
+
+docker run -it --name=myUbuntu --net=bridge ubuntu
+docker run -it --net=container:myUbuntu busybox
+```
+
+This will make your busybox container run on the same network that the Ubuntu container is running on, no matter what network it is. The containers you launch into the same network must be run on the same Docker host. Each container in the network can immediately communicate with other containers in the network.
+
+You could run ping coomand like ping myUbuntu in busybox.
+```
+docker network inspect backend
+```
+
+In practice, you will probably have a lot of networks with small numbers of containers connected to them. Networks are all isolated from each other. If two containers are not on the same network, they cannot talk directly.
+
+You may want that your containers running on separate Docker hosts to communicate over the network someday. In this case, the multi-host networking feature of Docker comes in handy.
+
+## Exposing and mapping ports
+
+You can expose a port in two ways, either in the Dockerfile with the EXPOSE instruction (we will do it in the chapter about creating images later) or in the run command using the --expose option. These are equivalent commands, though --expose will accept a range of ports as an argument (for example, --expose=1000-2000).
+
+You can bind a port using -p at runtime only.
+
+If you EXPOSE a port, the service in the container is not accessible from outside Docker, but from inside other Docker containers. So this is good for intercontainer communication.
+
+The -p option, on the other hand, is like publish - it will create a port mapping rule, **mapping a port on the container with the port on the host system**. If no port on the host is specified, Docker will automatically allocate one. Note that if you execute -p, but do not execute EXPOSE, **Docker does an implicit EXPOSE**. This is because if a port is open to the public, it is automatically also open to other Docker containers.
 
 
+EXPOSE
 
+This signals that there is a service available on the specified port. This is used in the Dockerfile that makes exposed ports open for other containers.
+
+--expose
+
+This is similar to EXPOSE, but is used at runtime.
+
+-p
+
+This specifies a port mapping rule, mapping the port on the container with the port on the host machine. This makes a port open from outside of Docker.
+
+-P
+
+This map is the dynamically allocated port on the host machine to all ports exposed using EXPOSE or -expose.
+
+
+```sh
+docker run -p <containerPort>:<hostPort> <image ID or name>
+
+# below are only accessible by other docker container.
+docker run --expose=7000-8000 <container ID or name>
+
+docker run --name nginx -d -p 8080:80 nginx
+
+docker run --name nginx -d -p 8080:80 -p 8081:80 nginx
+# The -p flag can be used multiple times to configure multiple ports.
+```
+
+## Linking containers
+
+ To link containers together, we use the --link option in the run command. If we link one container to another, two things will happen under the hood. First, Docker will update the linked container's /etc/hosts file automatically to reference to the container we are linking to.
+
+ Let's try it for the example. First, let's run the MySQL container on the bridge network:
+
+ ![](imgs/image_04_024.jpg)
+
+ Next, let's run the second container, again the latest Ubuntu, but this time linking it with the MySQL container:
+
+ ```sh
+ docker run -it --name=ubuntu --link mysql:mysql ubuntu
+```
+You can notice that Docker automatically adjusted the /etc/hosts file of the Ubuntu container, inserting an entry for the MySQL instance:
+
+ ![](imgs/image_04_025.jpg)
+
+The second important thing that will happen when creating a link, is the transfer of some exposed environment variables from the container we are linking to. 
+
+ ![](imgs/image_04_026.jpg)
+
+Each variable is prefixed by the uppercase alias, taken from the --link command, which is MYSQL in our case. 
+
+
+Within a user-defined bridge network, linking is not supported. It works only on the bridge network created by default. If you need your containers to communicate on your created bridge network, you can expose and publish container ports on containers in this network.
+
+Docker's linking feature is a great way for source container to provide information about itself to a recipient container. In fact, this is internal to Docker and doesn't require exposing any network ports. That's a big benefit of linking: we don't need to expose the source container to the network.
