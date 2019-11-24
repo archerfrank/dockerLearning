@@ -354,3 +354,267 @@ docker volume rm $(docker volume ls -qf dangling=true)
 Volumes allow sharing data between the host filesystem and the Docker container, or between other Docker containers, and they persist even if the container itself is deleted. We can use the volume drivers to further extend the file exchange possibilities.
 
 # Chapter 5. Finding Images
+
+ Docker registry is a service that is storing your Docker Images, and repository is a collection of different docker images with the same name, which have different tags.
+
+ Docker Hub is available at https://hub.docker.com/.
+
+ Useful command.
+
+ ```sh
+docker login --username myUser --password 123
+docker logout
+
+
+```
+
+There can also be images with no namespace prefix-these will be images from the so-called official repositories. The official repositories are certified repositories from vendors and contributors to Docker such as Red Hat, Oracle, and Canonical. And of course, you can use them to build your own applications and services. An example of the official images can be the most-starred ubuntu, nginx, or the official version of hello-world-images that we have been using in the previous chapters.
+
+The latest tag assigned to an image simply means that it's the image that was last built and executed without a specific tag provided. **It's easy to understand that it may be confusing-pulling the image tagged latest will not fetch the latest version of the software.**
+
+If you pull the image without specifying a tag, Docker will download the image tagged latest. But this will not be necessary with the latest and greatest version of the software you wanted to run. Instead, you should always consult the other tags present in the repository to pick the version of software you need.
+
+Also, the same latest tag behavior will apply if we build our own images later in this book. If you do not specify a tag after the repository name, it will be automatically assigned the latest tag in the repository.
+
+# Chapter 6. Creating Images
+
+## Dockerfile instructions
+
+* FROM
+```dockerfile
+FROM <image>
+FROM <image>:<tag>
+```
+
+* MAINTAINER
+```dockerfile
+MAINTAINER authors_name
+```
+* ADD
+
+The ADD basically copies the files from the source on the host into the Docker image's own filesystem at the desired destination.
+
+```dockerfile
+ADD <source path or URL> <destination path >
+ADD myFiles* /myDirectory/:         This will add all the files starting with myFiles
+ADD file?.txt /myDirectory/:        This will replace with any single character so that it will match file1.txt, fileB.txt, and so on.
+
+ADD config.json projectRoot/     will add the config.json file to <WORKDIR>/projectRoot/
+
+ADD config.json /absoluteDirectory/     will add the config.json file to the /absoluteDirectory/
+```
+
+A trailing slash / is quite important when adding files or directories to an image. If the source path doesn't end with a trailing slash, it will be considered as a single file and just copied into the destination. If the source path ends with a trailing slash, it will be considered as a directory; all of its contents will then be copied into the destination path, but the directory itself will not be created at the destination path.
+
+If the source path points to the compressed archive in one of the common formats such as zip, tar, and so on, it will be decompressed into the destination path. Docker doesn't recognize an archive by the filename, it checks the contents of the file.
+
+The same trailing slash rules apply to the destination path: if it ends with a trailing slash, it means that it's a directory. Otherwise, it will be considered as a single file. This gives you great flexibility when constructing filesystem contents of your image--you can add files into directories or just add whole directories.
+
+Note that when using ADD with more than one source file, the destination must be a directory and end with a slash /.
+
+* Copy
+
+For files and directories that do not require the ADD feature of archive unpacking or fetching from the URL, you should always use COPY.
+
+COPY supports only the basic copying of local files into the container. On the other hand, ADD features some more, such as archive extraction, downloading files through URL, and so on. Docker's best practices say, that you should prefer COPY if you do not need those additional features of ADD. 
+
+```dockerfile
+COPY <source path or URL> <destination path >
+```
+
+* CMD
+
+The purpose of a CMD instruction is to provide defaults for an executing container. You can think about the CMD instruction as the starting point of your image, when the container is being run later on. This can be an executable, or if you specify the ENTRYPOINT instruction .
+
+1. CMD ["executable","parameter1","parameter2"]: This is the so-called exec form. It's also the preferred and recommended form. The important note is that the exec form does not invoke a command shell when the container is run. It just runs the executable provided as the first parameter.
+
+2. CMD command parameter1 parameter2, This a shell form of the instruction. This means that the executable will not be the container's PID 1--and will not receive Unix signals--so your executable will not receive a SIGTERM from docker stop <container>. There is another drawback--you will need a shell in your container. If you're building a minimal image, it doesn't need to contain a shell binary. The CMD instruction using the shell form will simply fail.
+
+When Docker is executing the command, it doesn't check if the shell is available inside the container; if there is no /bin/sh in the image, the container will fail to start. If we use the exec format, we can't use echo command, because it is a shell command.
+
+Because CMD is like a starting point for the Docker Engine when running a container, there can only be one single CMD instruction in a Dockerfile.
+
+If there are more than one CMD instructions in a Dockerfile, only the last one will take effect.
+
+The parameters for the CMD command can be overridden when starting the image--if you specify arguments to docker run. 
+
+* ENTRYPOINT
+
+The ENTRYPOINT instruction specifies a command that will always be executed when the container starts. The CMD instruction, on the other hand specifies the arguments that will be fed to the ENTRYPOINT instruction. 
+
+1. ENTRYPOINT ["executable", "parameter1", "parameter2"]
+
+```dockerfile
+ ENTRYPOINT [ "sh", "-c", "echo $HOSTNAME" ]
+```
+Variables that are defined in the Dockerfile using ENV
+
+2. ENTRYPOINT command parameter1 parameter2
+
+```dockerfile
+FROM busybox
+ENTRYPOINT ["/bin/ping"]
+CMD ["localhost"]
+```
+
+If you now run the container built from this Dockerfile, the ping command, as an image ENTRYPOINT will be processing arguments from the supplied CMD argument: localhost, in our case. As a result, you will have a /bin/ping localhost command-line response:
+
+ ![](imgs/image_06_004.jpg)
+
+ The ENTRYPOINT command and parameters will not be overwritten from the command line. Instead, all the command-line arguments will be added after ENTRYPOINT parameters.
+
+ You can use the exec form of ENTRYPOINT to set fairly stable default commands and arguments and then use either form of CMD to set additional defaults that are more likely to be changed.
+
+ As you can see, both CMD and ENTRYPOINT instructions define what command gets executed when running a container. Let's summarize what we have learnt about the differences and their co-operation:
+
+1. Dockerfile should specify at least one of the CMD or ENTRYPOINT instructions
+2. Only the last CMD and ENTRYPOINT in a Dockerfile will be used
+ENTRYPOINT should be defined when using the container as an executable
+3. You should use the CMD instruction as a way of defining default arguments for the command defined as ENTRYPOINT or for executing an ad-hoc command in a container
+4. CMD will be overridden when running the container with alternative arguments
+5. The ENTRYPOINT argument sets the concrete default application that is used every time a container is created using the image
+6. If you couple ENTRYPOINT with CMD, you can remove an executable from CMD and just leave its arguments, which will be passed to the ENTRYPOINT instruction
+7. The best use for the ENTRYPOINT instruction is to set the image's main command, allowing that image to be run as though it was that command (and then use CMD as the default flags).
+
+* LABEL
+
+```dockerfile
+LABEL "key"="value"
+LABEL description="This is my \ multiline description of the software."
+
+```
+
+* ENV 
+
+The first form, ENV <key> <value> will set a single variable to a value.
+
+The second form is ENV <key>=<value> ..., and allows setting multiple environment variables at once. 
+
+Note that you can use ENV to update the PATH environment variable, and then CMD parameters will be aware of that setting. This will result in a cleaner form of CMD parameters in the Dockerfile. Consider the following example:
+
+```dockerfile
+ENV CONFIG_TYPE=file CONFIG_LOCATION="home/Jarek/my \ app/config"
+ENV PATH /var/lib/tomcat8/bin:$PATH 
+
+ENV TOMCAT_VERSION_MAJOR 8
+ENV TOMCAT_VERSION 8.5.4
+RUN curl -SL http://apache.uib.no/tomcat/tomcat-$TOMCAT_VERSION_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz | tar zxvf apache-tomcat-$TOMCAT_VERSION.tar.gz  -c /usr/Jarek/apache-tomcat-$TOMCAT_VERSION
+ENV PATH /usr/Jarek/apache-tomcat-$TOMCAT_VERSION/bin:$PATH
+```
+Setting this will ensure that CMD ["startup.sh"] works, because it will find the startup.sh file in the system PATH. You can also use ENV to set the often modified version numbers so that upgrades are easier to handle.
+
+The ENV values can be also overridden just before the start of the container, using docker run --env <key>=<value>.
+
+* EXPOSE
+
+The EXPOSE instruction informs Docker that the container listens on the specified network ports at runtime. 
+
+We already know that EXPOSE does not make the ports of the container automatically accessible to the host. To do that, you must use either the -p flag to publish a range of ports or the -P flag to publish all of the exposed ports at once.
+
+```dockerfile
+docker run nginx -p 80
+docker run nginx -P
+```
+
+* RUN
+
+The RUN instruction is the central executing instruction for Dockerfiles. In essence, the RUN instruction will execute any commands in a new layer on top of the current image and then commit the results. The resulting committed image will be used as a base for the next instruction in the Dockerfile. 
+
+The command supplied through the RUN instruction is executed during the build time, whereas the command specified through the CMD instruction is executed when the container is launched by executing docker run on the newly created image. 
+
+RUN, similarly to CMD and ENDPOINT, can take two forms:
+
+1. RUN <command>: This is a shell form. 
+
+2. RUN ["executable", "parameter1", "parameter2"]: This an exec form. 
+
+If the RUN command doesn't change between two builds, Docker's cache will not get invalidated. In effect, Docker will reuse the previous results from cache. This is clearly harmful, when, for example, the RUN command is a source code checkout, for example, a Git clone as the first step of a project's build.
+
+That's why it's good to know how to selectively invalidate the cache. In the Docker world, this is called cache busting.
+
+```dockerfile
+FROM ubuntu
+RUN apt-get update
+RUN apt-get install -y mongodb-server
+```
+
+If we build an image from this Dockerfile, all layers from two RUN instructions will be put into the layers cache. But, after a while you decide you want the node.js package in your image, so now the Dockerfile looks like this:
+
+```dockerfile
+FROM ubuntu
+RUN apt-get update
+RUN apt-get install -y mongodb-server
+RUN apt-get install -y nodejs
+```
+
+On the second build, Docker will reuse the layers by taking them from the layer's cache. As a result the apt-get update will not be executed, because the cached version will be used. In effect, your newly created image will potentially have an outdated version of the MongoDb and node-js packages. You should always have the cache concept in mind when creating RUN instructions. 
+
+
+We should always combine RUN apt-get update with apt-get install in the same RUN statement, which will create just a single layer. Consider the following example:
+
+```dockerfile
+RUN apt-get update \
+&& apt-get install -y mongodb-server \
+&& apt-get install -y nodejs
+```
+
+Yet better than this, you can also use a technique called version pinning to avoid cache problems.
+
+```dockerfile
+RUN apt-get update \
+&& apt-get install -y mongodb-server \
+&& APT-GET INSTALL -Y NODEJS= 0.6.12~DFSG1-1UBUNTU1
+```
+
+Using apt-get update alone in a RUN statement is not recommended because of the caching issues.
+
+The cache for RUN instructions can be invalidated by ADD instructions or using the --no-cache flag, for example:
+
+```dockerfile
+docker build --no-cache
+```
+
+* USER
+
+* VOLUME
+
+The syntax couldn't be simpler, it's just VOLUME ["/volumeName"].
+
+The parameter for VOLUME can be a JSON array, a plain string with one or more arguments, for example:
+
+```dockerfile
+VOLUME ["/var/lib/tomcat8/webapps/"]
+VOLUME /var/log/mongodb /var/log/tomcat
+```
+
+The VOLUME instruction creates a mount point with the specified name and marks it as holding externally mounted volumes from native host or other containers.
+
+Basically, the VOLUME and -v options are almost equal. A difference between the VOLUME and -v options is that you can use the -v option dynamically and mount your host directory on your container when starting it by executing docker run. 
+
+The fundamental difference between VOLUME and -v is this: -v will mount the existing files from your operating system inside your Docker container and VOLUME  will create a new, empty volume on your host and mount it inside your container.
+
+* WORKDIR
+
+* ARG
+
+If you need to pass an argument at build time to the Docker during the docker build command, you can use the ARG instruction in the Dockerfile. 
+
+Later on, during the build, any value can be passed to the docker build command using the --build-arg switch:
+
+```sh
+--build-arg <variable name>=<value>
+```
+
+```dockerfile
+FROM ubuntu
+ARG user
+ARG version
+
+FROM ubuntu
+ARG user=jarek
+```
+
+```sh
+docker build --build-arg user=somebodyElse .
+```
+
