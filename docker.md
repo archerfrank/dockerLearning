@@ -618,3 +618,512 @@ ARG user=jarek
 docker build --build-arg user=somebodyElse .
 ```
 
+* STOPSIGNAL
+
+# Chapter 7.  Running Containers
+
+When you execute the docker run command, the container process that runs is isolated and has its very own filesystem, networking stack, and isolated process tree separate from the host. You run the image using the docker run command. Keep in mind that every docker run creates a new container with the specified image and starts a command inside it (CMD or ENTRYPOINT specified in the Dockerfile). By default, the file system of a container is persistent, even after the container shut down. These file systems can grow in size very quickly if you run short-term foreground processes again and again. The solution is that instead of cleaning it manually by hand, tell Docker to automatically clean up the container and remove the file system when the container exits. You can do this by adding the **-rm** flag, so that the container data is removed automatically after the process is finished.
+
+```sh
+docker run --rm -it Ubuntu /bin/bash
+
+```
+
+## Detached
+
+Take note of the fact that the containers started in detached mode exit when the root process used to run the container exits. Understanding this is important even if you have some process running in the background (started from the instruction in the Dockerfile). Docker will stop the container if the command that started the container finishes. In other words, Docker requires your command to keep running in the foreground; otherwise, it thinks that your application stops and shuts down the container. For example, if the default command in your container is bash, when you run the image in background using the -d command line option, the shell will exit immediately and Docker will stop the container.
+
+But there is a solution for this. You can cheat Docker by executing a foreground command forever.
+
+```sh
+docker run -d myImage tail -f /dev/null
+```
+
+Executing the tail command on /dev/null will keep the main bash shell busy and will not allow Docker to shut the container down.
+
+docker logs command. You can access the log files because everything that is written to stdout for the process that is pid 1 inside the container will get captured in a special history file on the Docker host. 
+
+```sh
+docker logs -f <container name>
+```
+
+To retain control over a detached container, use the dockerattach command. The syntax for docker attach is:
+
+```sh
+docker attach [OPTIONS] <container ID or name>
+```
+
+The docker attach command can come in handy if you want to see what is written to the stdout stream in real time. It will basically reattach your console to the process running in the container. In other words, it will stream the stdout into your screen and map the stdin to your keyboard, thus allowing you to enter the commands and see their output. To detach from the process, use the default Ctrl + P, Ctrl + Q keyboard sequence.
+
+## Foreground
+
+The foreground mode is the default one. It's the opposite of the detached mode and it's used when you simply do not specify the -d option. 
+
+```sh
+docker run -a stdin -a stdout -i -t centos /bin/bash
+```
+
+The preceding command will attach both stdin and stdout streams to your console.
+
+There are -i or  --interactive (for keeping the STDIN stream open even if not attached) and -t or --tty (for attaching a pseudo-tty) switches, commonly used together as -it, which you will need to allocate a pseudo-tty console for the process running in the container. It is used to attach the command line to the container after it has started. 
+
+```sh
+docker run -it ubuntu
+```
+
+## Identifying images and containers
+
+Docker will pick the image tagged by latest by default. You can also use the tag syntax or the digest syntax:
+
+```sh
+Image[:tag]
+Image[@digest]
+
+docker run ubuntu:14.04
+docker -it run ubuntu@sha256:1ffcb21397aa4012a9d88cff8582224ff06aa13ba2de2e9f96c9814bfda95e0 /bin/bash
+```
+
+To limit the number of active processes within the container, execute the docker run command with --pids-limit value set:
+
+```sh
+docker run --pids-limit=64
+```
+
+## Overriding default commands from Dockerfile
+
+* Overriding the CMD and ENTRYPOINT
+
+Anything that appears after the image name in the docker run command is passed to the container and treated as CMD arguments. As a result, if the image also specifies an ENTRYPOINT then the CMD or COMMAND gets appended as arguments to the ENTRYPOINT. 
+
+
+```sh
+docker run [OPTIONS] IMAGE[:TAG|@DIGEST] [COMMAND] [ARG...]
+
+docker run -it --entrypoint /bin/bash Ubuntu
+
+dockerexec
+```
+
+## Executing arbitrary commands with exec
+
+In opposite of the overriding the CMD or ENTRYPOINT, the command started using docker exec will only run while the container's primary process (PID 1) is running.
+
+```sh
+docker run -it ubuntu bash --name myUbuntuBash
+docker exec -d myUbuntuBash touch /tmp/myFile
+```
+
+## Monitoring containers
+
+### Log
+
+```sh
+docker logs -f <container name>
+
+docker inspect -f {{.LogPath}} 351c05e5ca22
+
+docker run --log-driver=syslog ubuntu
+```
+The -f flag acts as the same flag in Linux tail command; it will continuously display new log entries on the console. 
+
+The docker logs command is available only for the json-file and journal logging drivers. To access logs written to other log engines, you will need to use the tools provided by the vendor of the log solution, such as Splunk.
+
+### Container events
+
+To get the real-time events from the server, we use the docker events command.
+When something has changed during the container runtime, such as stop, pause or kill container will store and publish an event for that case. 
+
+### Inspecting a container
+
+```sh
+docker inspect [OPTIONS] CONTAINER|IMAGE|TASK [CONTAINER|IMAGE|TASK...]
+
+docker inspect -f '{{if ne 0.0 .State.ExitCode }}{{.Name}} {{.State.ExitCode}}{{ end }}' $(dockerps -aq)
+```
+
+Note that we provide $(dockerps -aq) instead of container ID or name. As a result, all of the running containers IDs will be piped to the docker inspect command, which can be a very handy shortcut. The curly brackets {{}}means that the Go template directives anything outside of them will be printed out literally. The dot (.) in Go templates means context. Most of the time, the current context will be the complete data structure for the metadata, but it can be rebound when needed, including using the with action. For example, the following two inspect commands will print out exactly the same result:
+
+```sh
+docker inspect -f '{{.State.ExitCode}}'wildfly
+docker inspect -f '{{with .State}} {{.ExitCode}} {{end}}'wildfly
+```
+
+### Container exit codes and restart policies
+
+When the dockerrun command ends with a non-zero code, the exit codes follow the chroot standard, as you can see in the following example:
+
+1. exit code 125:The docker run command fails by itself
+2. exit code 126: The supplied command cannot be invoked
+3. exit code 127: The supplied command cannot be found
+4. Other, non-zero, application dependent exit code.
+
+
+Currently Docker has four restart policies.
+
+**No**
+
+**Always**. If we want the container to be restarted no matter what exit code the command would have, we can use the always restart policy. The restart policy will always restart the container. This is true even if the container has been stopped before the reboot. Whenever the Docker service is restarted, containers using the always policy will also be restarted, it doesn't matter whether they were executing or not.
+
+**on-failure**
+This is a special restart policy and probably the most often used one. Using the on-failure restart policy, you can instruct Docker to restart your container whenever it exits with a non-zero exit status and not restart otherwise.
+
+```sh
+dockerrun --restart=on-failure:5 mongo
+
+docker inspect -f "{{ .RestartCount }}"<ContainerID>
+
+docker inspect -f "{{ .State.StartedAt }}"<ContainerID>
+```
+You should know that Docker uses a delay between restarting the container, to prevent flood-like protection. 
+
+In effect, the daemon will wait for 100 ms, then 200 ms, 400ms, 800ms, and so on, until either the on-failure limit is reached or when you stop the container using docker stop or execute the force removal by executing the dockerrm -f command.
+
+**unless-stopped**
+The unless-stopped restart policy acts the same as always with one exception, it will restart the container regardless of the exit status, but do not start it on daemon startup if the container has been put to a stopped state before. 
+
+Before you apply the restart policy to your container, it's good to think what kind of work the container will be used to do. That also depends on the kind of software that will be running on the container. A database for example, should have probably always or unless-stopped policy applied. If your container has some restart policy applied, it will be shown as Restarting or Up status when you list your container using the dockerps command.
+
+
+To set the policy during the runtime, we can use the docker update command. Apart from other runtime parameters (such as memory or CPU constraints for example, about which we are going to tell in a while later in this chapter), the docker update command gives you the possibility to update the restart policy on a running container. 
+
+```sh
+docker update --restart=always <CONTAINER_ID or NAME>
+
+docker inspect --format '{{ .HostConfig.RestartPolicy.Name }}'<ContainerID>
+```
+
+You can also see what restart policy was applied using the docker events command you already know from the previous section. The docker events that can be used to observe the history of runtime events that the container has reported, will also report the docker update event, providing you the details what has changed.
+
+## Runtime constraints on resources
+
+### Memory
+The syntax of the docker run command with memory constraints set will be as follows:
+
+```sh
+docker run -it -m 512m ubuntu
+
+docker run -it -m 1G --memory-reservation 500M ubuntu /bin/bash
+
+docker run -it --kernel-memory 100M ubuntu  /bin/bash
+
+docker run -it -m 1G --kernel-memory 100M ubuntu /bin/bash
+```
+
+If you do not set a limit on the memory container can allocate can lead to random issues where a single container can easily make the whole host system unstable and/or unusable. So it's a wise decision to always use the memory constraints on the container.
+
+When memory reservation is applied, Docker will detect low memory situation and will try to force container to restrict it's consumption up to a reservation limit. If you do not set the memory reservation limit, it will be the same as the hard memory limit set with the -m switch.
+
+Memory reservation is not a hard limit feature. There's no guarantee the limit won't be exceeded. The memory reservation feature will attempt to ensure that memory will be allocated based on the reservation setting.
+
+The preceding command sets the hard memory limit to one gig, and then sets the memory reservation to half a gig. With those constraints set, when the container consumes memory more than 500M and less than 1G, Docker will attempt to shrink container memory below 500M.
+
+
+The kernel memory is something entirely different from the user memory--the main difference is that kernel memory can't be swapped out to disk. It includes stack pages, slab pages, sockets memory pressure, and TCP memory pressure. You use the --kernel-memory switch setup kernel memory limit to constrain these kinds of memory. 
+
+### Processors
+
+Using the -c (or --cpu-shares as an equivalent) for the docker run command switch it's possible to specify a value of shares of the CPU that container can allocate. By default, every new container has 1024 shares of CPU and all containers get the same part of CPU cycles. 
+
+Consider three containers, one (let's call it Container1) has --cpu-shares set for 1024 and two others (Container2 and Container3) have a --cpu-shares setting of 512. When processes in all three containers attempt to use all of the CPU power, the Container1 would receive 50% of the total CPU time, because it has half of the CPU usage allowed in comparison to the sum of other running containers (Container2 and Container3). If we add a fourth container (Container4) with a --cpu-share of 1024, our first Container1 will only get 33% of the CPU, because it now has one third of the total CPU power assigned, relatively. Container2 will receive 16.5%, Container3 also 16.5% and the last one, Container4, again, will be allowed to use 33% of the CPU.
+
+
+```sh
+docker update --cpu-shares 512 -m 500M abbdef1231677 dabdff1231678
+docker update --cpu-shares 512 abbdef1231677
+docker update --restart=always -m 300M aabef1234716
+```
+
+## Docker Swarm mode
+
+Running a single application in a Docker container is easy. We already did it a number of times. But what about scaling and fail-over? 
+
+We don't have to make the decision on which host to start every container on. It will be made automatically by Swarm - in the background, Docker running in swarm mode decides which nodes to start them on. It may seem complex, but in real life running Docker Swarm is as easy as running single Docker containers. 
+
+```sh
+docker swarm init --advertise-addr<IP>
+
+docker swarm join \
+  --token
+SWMTKN-1-5p7kzi2jbising1pew571s9ljidy61biticftzbwmj5j4nfocg-6aieefd3frhl3ow3zppulc0bc
+
+docker service create --replicas 1 -p80:80 --name nginx nginx
+docker service scale nginx=3
+docker service ls
+docker service ps
+```
+ ![](imgs/image_07_008.jpg)
+
+
+To connect a node to the Swarm, execute the docker swarm join command, including the token you were given from the docker swarm init command
+
+# Publishing Images
+
+```sh
+docker tag IMAGE[:TAG] IMAGE[:TAG]
+
+docker tag myHelloWorld:test myRepo/myHelloWorld:version1.0.test
+
+docker login --username=yourUsername --email=yourEmail@address.com
+
+docker push yourUsername/myRepo
+```
+
+Automatic Build repository is a great feature; it allows you to keep the source of your images (including of course, Dockerfiles) and the images on the DockerHub in sync. We also know how to use Webhooks feature to do some more automation, for example continuous deployment. In the next chapter, we will go a little bit more into using Docker, we will be utilizing Docker to package our Java and JavaScript application into the container.
+
+# Using Docker in Development
+
+## Using Docker with Maven
+
+### Spotify's Maven Docker plugin
+
+It's available as open source and you can get the sources and documentation from GitHub: https://github.com/spotify/docker-maven-plugin. You can use this plugin to create a Docker image with artifacts built from your Maven project.
+
+The plugin will expect the Dockerfile in this directory, so if you specify that directory, it must contain valid Dockerfile.
+
+```xml
+<build>
+      <plugins>
+        <plugin>
+          <groupId>com.spotify</groupId>
+          <artifactId>docker-maven-plugin</artifactId>
+          <version>0.4.13</version>
+          <configuration>
+            <imageName>myImage</imageName> <dockerDirectory>docker</dockerDirectory>
+            <resources>
+              <resource>
+                <targetPath>/</targetPath>
+                <directory>${project.build.directory}</directory>
+                <include>${project.build.finalName}.jar</include>
+              </resource>
+            </resources>
+          </configuration>
+        </plugin>
+      </plugins>
+    </build>
+```
+
+In the preceding example we have included the plugin in the plugins section of the pom.xml file. One jar file from the ${project.build.directory}, which will be the /target directory by default will be included in the build context. This time it will be a jar file named as your application name, containing your built application.
+
+```sh
+mvn clean package docker:build
+
+mvn clean package docker:build -DpushImage
+```
+
+### fabric8io Maven Docker plugin
+
+Fabrio8.io Docker Maven plugin is very powerful and flexible when it comes to the configuration. To setup the image configuration, you will need to create <image> element in the <configuration><images> element, as shown on the following example:
+
+```xml
+<configuration>
+      <images>
+        <image>
+          <alias>myApplication</alias>
+          <name>me/my-application:${project.version}</name>
+          <build>
+            <from>java:8</from>
+            <assembly>
+              <descriptor>artifact</descriptor>
+            </assembly>
+            <cmd>
+              <shell>java -jar maven/myApplication.jar</shell>
+            </cmd>
+          </build>
+          <run>
+            <ports>
+              <port>8080:8080</port>
+            </ports>
+          </run>
+        </image>
+      </images>
+    </configuration>
+```
+
+If you want to use the existing Dockerfile, you need to provide additional dockerFileDir and dockerFile elements. The first one will specify a directory containing a Dockerfile, the second one will point to the specific Dockerfile in that directory. All files in the directory that are specified as the dockerFileDir element will also be included in the image build context.
+
+The inline configuration, on the other hand, will describe the image building process in the pom.xml itself. You will need to provide elements, such as <from>, which will contain the base image (as FROM instruction in the Dockerfile). The assembly descriptor contains all the files that will go into the image and <cmd> contains the command to run when a container is created. 
+
+```xml
+   <ports>
+      <port>8080</port>
+    </ports>
+
+    <volumes>
+      <volume>/path/to/volume</volume>
+    </volumes>
+
+   <entryPoint>
+      <exec>
+        <arg>java</arg>
+        <arg>-jar</arg>
+        <arg>/maven/myApplication.jar</arg>
+      </exec>
+    </entryPoint>
+```
+
+The fabric8.io plugin has a lot to offer when working with Maven and Docker. You can always refer to the newest documentation present on the plugin's website at https://dmp.fabric8.io/. It's the first class choice if you need to build or run Docker containers from your Maven build.
+
+## Spring Boot application in Docker container
+The basic steps for creating Java application in the container are:
+
+* Using a base image pulled out from the Docker Hub
+* Installing the application itself, it will be an executable jar file in our case
+* Exposing ports, if your application needs to communicate with the outside world using a network
+* Running the container
+
+Let's begin with creating our Maven pom.xml build file, as shown in the following example:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+    <project>
+      <modelVersion>4.0.0</modelVersion>
+      <groupId>pl.finsys</groupId>
+      <artifactId>hello-docker</artifactId>
+      <version>0.0.1-SNAPSHOT</version>
+      <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>1.4.1.RELEASE</version>
+      </parent>
+      <dependencies>
+        <dependency>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+      </dependencies>
+      <properties>
+        <java.version>1.8</java.version>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </project>
+```
+
+```java
+    package helloDocker;
+    
+    import org.springframework.web.bind.annotation.RestController;
+    import org.springframework.web.bind.annotation.RequestMapping;
+    
+    @RestController
+    public class HelloController {
+        @RequestMapping("/")
+        public String hello() {
+            return "Greetings from Spring Boot in Docker!";
+        }
+    }
+
+
+    package helloDocker;
+    
+    import org.springframework.boot.SpringApplication;
+    import org.springframework.boot.autoconfigure.
+      SpringBootApplication;
+    import org.springframework.context.ApplicationContext;
+    
+    @SpringBootApplication
+    public class Application {
+        public static void main(String[] args) {
+            ApplicationContext ctx =
+              SpringApplication.run(Application.class, args);
+        }
+    }
+```
+
+We are going to pick the latest one, which is Java 8u102-jdk 
+
+```xml
+<plugin>
+  <groupId>io.fabric8</groupId>
+  <artifactId>docker-maven-plugin</artifactId>
+  <version>0.16.8</version>
+  <configuration>
+    <dockerHost>http://127.0.0.1:2375</dockerHost>
+    <verbose>true</verbose>
+    <images>
+      <image>
+        <name>hello-docker</name>
+        <build>
+          <from>openjdk:8u102-jdk</from>
+          <ports>
+            <port>8080</port>
+          </ports>
+          <entryPoint>
+            <exec>
+              <args>java</args>
+              <args>-jar</args>
+              <args>/maven/hello-docker-
+                    ${project.version}.jar</args>
+            </exec>
+          </entryPoint>
+          <assembly>
+            <descriptorRef>artifact</descriptorRef>
+          </assembly>
+        </build>
+      </image>
+    </images>
+  </configuration>
+</plugin>
+```
+
+```sh
+mvn clean package docker:build
+docker images
+docker run -it -p8080:8080 hello-docker
+```
+
+ ![](imgs/image_09_005.jpg)
+  ![](imgs/image_09_007.jpg)
+
+Alternatively, to running docker run by hand, we can include the runtime section into our project's pom.xml file. The whole <image> element will look similar to this:
+
+```xml
+<image>
+  <name>hello-docker</name>
+  <build>
+    <from>openjdk:8u102-jdk</from>
+    <ports>
+      <port>8080</port>
+    </ports>
+    <entryPoint>
+      <exec>
+        <args>java</args>
+        <args>-jar</args>
+        <args>/maven/hello-docker-${project.version}.jar</args>
+      </exec>
+    </entryPoint>
+    <assembly>
+      <descriptorRef>artifact</descriptorRef>
+    </assembly>
+  </build>
+  <run>
+    <ports>
+      <port>8080:8080</port>
+    </ports>
+  </run>
+</image>
+```
+
+```sh
+mvn clean package docker:build docker:run
+```
+
+# More resource
+
+Compose is a tool for defining and running multi-container Docker applications. With this tool you can use a single Compose file to configure your application's services. Then, using a single command, you can create and start all the services from your configuration.
+
+Universal Control Plane is the enterprise-grade (you can install it behind your own firewall) cluster management solution from Docker. It helps you manage your whole cluster from a single interface.
+
+Docker Trusted Registry is an enterprise-grade image storage solution from Docker--a secure place to store and manage the Docker images you use.
+
+The Docker Store, which is the place to find the best-trusted commercial and free software distributed as Docker Images.
+
+Apart from the official, very comprehensive documentation, there is an awesome (it's even named that way - Awesome Docker) list of Docker resources available on GitHub https://github.com/veggiemonk/awesome-docker.
+
+The list of resources has a good structure and begins with the basics like tutorials explaining what Docker actually is and how to install it on various platforms. 
